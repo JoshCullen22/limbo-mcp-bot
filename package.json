@@ -1,0 +1,14 @@
+{
+  "name": "limbo-mcp-dropdown-bot",
+  "version": "2.0.0",
+  "description": "LIMBO MCP dropdown interface bot",
+  "main": "mcp-dropdown-bot.js",
+  "scripts": {
+    "start": "node mcp-dropdown-bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "node-fetch": "^2.6.7",
+    "dotenv": "^16.0.3"
+  }
+}
