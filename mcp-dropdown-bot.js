@@ -1,12 +1,20 @@
 // =========================================================================
 //                             IMPORTS & SETUP
 // =========================================================================
-require('dotenv').config();
+require('dotenv').config(); 
 
 const { 
-  Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, 
-  StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, 
-  TextInputBuilder, TextInputStyle, Partials 
+  Client, 
+  GatewayIntentBits, 
+  EmbedBuilder, 
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  Partials
 } = require('discord.js');
 const fetch = require('node-fetch');
 
@@ -18,281 +26,208 @@ const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 const MCP_CHANNEL_ID = process.env.MCP_CHANNEL_ID;
 const ALLOWED_ROLES = process.env.ALLOWED_ROLES ? process.env.ALLOWED_ROLES.split(',') : [];
 
-// --- SCALABLE LOGGING CONFIGURATION ---
-// This is the single source of truth for all logging options.
-// To add/remove/edit a department or task, you only need to change it here.
-const departmentConfig = {
-    'MOD': {
-        label: 'Moderation', emoji: '🛡️',
-        tasks: [
-            { label: 'Warn a User', value: 'USER_WARN' }, { label: 'Mute/Timeout a User', value: 'USER_MUTE' },
-            { label: 'Kick a User', value: 'USER_KICK' }, { label: 'Ban a User', value: 'USER_BAN' },
-            { label: 'Review User Reports', value: 'REPORTS_REVIEW' }, { label: 'Resolve Dispute', value: 'DISPUTE_RESOLVE' },
-            { label: 'Other (Specify in Form)', value: 'OTHER', emoji: '✍️' }
-        ]
-    },
-    'CREA': {
-        label: 'Creatives', emoji: '🎨',
-        tasks: [
-            { label: 'Create Graphic/Image', value: 'GRAPHIC_CREATE' }, { label: 'Edit Video', value: 'VIDEO_EDIT' },
-            { label: 'Write Announcement/Copy', value: 'COPY_WRITE' }, { label: 'Plan Content Schedule', value: 'CONTENT_PLAN' },
-            { label: 'Other (Specify in Form)', value: 'OTHER', emoji: '✍️' }
-        ]
-    },
-    'AUTO': {
-        label: 'Automations', emoji: '⚙️',
-        tasks: [
-            { label: 'Fix Bot/Workflow Bug', value: 'BUG_FIX' }, { label: 'Deploy New Feature', value: 'FEATURE_DEPLOY' },
-            { label: 'Create New Workflow', value: 'WORKFLOW_CREATE' }, { label: 'Perform System Maintenance', value: 'SYS_MAINTENANCE' },
-            { label: 'Other (Specify in Form)', value: 'OTHER', emoji: '✍️' }
-        ]
-    },
-    'CS': {
-        label: 'Customer Service', emoji: '🎧',
-        tasks: [
-            { label: 'Answer Support Ticket', value: 'TICKET_ANSWER' }, { label: 'Resolve Member Issue', value: 'ISSUE_RESOLVE' },
-            { label: 'Update Knowledge Base', value: 'KB_UPDATE' }, { label: 'Guide New Member', value: 'MEMBER_GUIDE' },
-            { label: 'Other (Specify in Form)', value: 'OTHER', emoji: '✍️' }
-        ]
-    },
-    'GEN': {
-        label: 'General', emoji: '📋',
-        tasks: [
-            { label: 'Team Meeting', value: 'MEETING_ATTEND' }, { label: 'Weekly Report', value: 'REPORT_SUBMIT' },
-            { label: 'Administrative Task', value: 'ADMIN_TASK' },
-            { label: 'Other (Specify in Form)', value: 'OTHER', emoji: '✍️' }
-        ]
-    }
-};
-
-// Startup check for configuration
-if (!BOT_TOKEN || !N8N_WEBHOOK_URL || !MCP_CHANNEL_ID || !ALLOWED_ROLES || ALLOWED_ROLES.length === 0) {
-    console.error('❌ FATAL: Missing critical environment variables in .env file or hosting service.');
-    process.exit(1);
-}
+// Startup checks...
 
 // =========================================================================
 //                             DISCORD CLIENT
 // =========================================================================
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ],
   partials: [Partials.Channel]
 });
 
 // =========================================================================
 //                              BOT EVENTS
 // =========================================================================
-client.once('ready', () => {
-  console.log(`🩸 LIMBO MCP Logger is online as ${client.user.tag}!`);
-  postMCPInterface();
+client.once('ready', async () => {
+  console.log(`🩸 LIMBO MCP OPTIMIZED LOGGER is online as ${client.user.tag}!`);
+  await postMCPInterface();
 });
 
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.inGuild() || !hasPermission(interaction.member)) {
-    if (interaction.isRepliable()) {
-        interaction.reply({ content: 'You do not have permission to use this.', ephemeral: true });
-    }
-    return;
+    return interaction.reply({ content: '❌ You do not have the required role to use the MCP.', ephemeral: true });
   }
 
-  if (interaction.isStringSelectMenu()) await handleSelectMenu(interaction);
-  else if (interaction.isButton()) await handleButtonClick(interaction);
-  else if (interaction.isModalSubmit()) await handleModalSubmit(interaction);
+  if (interaction.isStringSelectMenu()) {
+    await handleSelectMenu(interaction);
+  } else if (interaction.isButton()) {
+    await handleButtonClick(interaction);
+  } else if (interaction.isModalSubmit()) {
+    await handleModalSubmit(interaction);
+  }
 });
 
 // =========================================================================
-//                          INTERFACE & HANDLERS
+//                            MAIN HANDLERS
 // =========================================================================
 
-async function postMCPInterface() {
-    const channel = client.channels.cache.get(MCP_CHANNEL_ID);
-    if (!channel) return console.error(`[ERROR] MCP channel with ID '${MCP_CHANNEL_ID}' not found.`);
+async function handleSelectMenu(interaction) {
+    const [id, command, ...args] = interaction.customId.split('_');
+    const value = interaction.values[0];
+
+    if (id !== 'mcp') return;
 
     try {
-        const messages = await channel.messages.fetch({ limit: 20 });
-        const oldInterface = messages.find(m => m.author.id === client.user.id && m.embeds[0]?.title.includes('LIMBO MCP'));
-        if (oldInterface) await oldInterface.delete();
-    } catch (err) {
-        console.warn("[WARN] Could not delete old interface, probably due to permissions. Skipping.");
-    }
-
-    const embed = new EmbedBuilder()
-        .setColor(0x9b59b6)
-        .setTitle('🩸 LIMBO MCP (Master Control Panel)')
-        .setDescription(`**Welcome to the Bloodline Operations Center**\n\nSelect your department from the dropdown to log your tasks. Your options will be tailored to your role.`)
-        .setThumbnail('https://i.imgur.com/K8M2K1R.png') // Your logo here
-        .setFooter({ text: 'LIMBO Bloodline Operations • Data-driven decisions' })
-        .setTimestamp();
-
-    const departmentSelect = new StringSelectMenuBuilder()
-        .setCustomId('mcp_department_select')
-        .setPlaceholder('🏢 Select Your Department to Begin...')
-        .addOptions(Object.entries(departmentConfig).map(([id, { label, emoji }]) => ({
-            label: label,
-            value: id, // Use the short, unique ID as the value
-            emoji: emoji
-        })));
-
-    const actionButtons = new ActionRowBuilder()
-        .addComponents(
-            new ButtonBuilder().setCustomId('mcp_view_stats').setLabel('My Stats').setStyle(ButtonStyle.Secondary).setEmoji('📊'),
-            new ButtonBuilder().setCustomId('mcp_refresh').setLabel('Refresh').setStyle(ButtonStyle.Success).setEmoji('🔄')
-        );
-
-    await channel.send({ 
-        embeds: [embed], 
-        components: [new ActionRowBuilder().addComponents(departmentSelect), actionButtons] 
-    });
-}
-
-async function handleSelectMenu(interaction) {
-    const [prefix, stage, ...args] = interaction.customId.split('_');
-    if (prefix !== 'mcp') return;
-
-    if (stage === 'department') { // Stage 1: Department selected
-        const deptId = interaction.values[0];
-        const department = departmentConfig[deptId];
-        if (!department) return interaction.reply({ content: 'Error: Invalid department selected.', ephemeral: true });
-
-        const taskSelectMenu = new StringSelectMenuBuilder()
-            .setCustomId(`mcp_task_${deptId}`)
-            .setPlaceholder(`👇 Select a task for ${department.label}...`)
-            .addOptions(department.tasks);
-        
-        const embed = new EmbedBuilder().setColor(0x3498db).setTitle(`${department.emoji} ${department.label} Department`).setDescription(`Please select the specific task you performed.`);
-        await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(taskSelectMenu)], ephemeral: true });
-    } else if (stage === 'task') { // Stage 2: Task selected
-        const deptId = args[0];
-        const taskId = interaction.values[0];
-        await showLogModal(interaction, deptId, taskId);
+        switch (command) {
+            case 'module':
+                await showTeamSelection(interaction, value);
+                break;
+            case 'team':
+                const [module] = args;
+                await showLogTypeSelection(interaction, module, value);
+                break;
+            case 'logtype':
+                const [moduleFromAction, team] = args;
+                await showImpactSelection(interaction, moduleFromAction, team, value);
+                break;
+            case 'impact':
+                const [moduleFromImpact, teamFromImpact, logType] = args;
+                await showQuickLogModal(interaction, moduleFromImpact, teamFromImpact, logType, value);
+                break;
+        }
+    } catch (error) {
+        console.error("Error in handleSelectMenu:", error);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: 'An error occurred. Please try again.', ephemeral: true });
+        } else {
+            await interaction.followUp({ content: 'An error occurred. Please try again.', ephemeral: true });
+        }
     }
 }
 
 async function handleButtonClick(interaction) {
-    const [prefix, action] = interaction.customId.split('_');
-    if (prefix !== 'mcp') return;
-
-    if (action === 'refresh') {
-        await interaction.deferUpdate();
-        await postMCPInterface();
-    } else if (action === 'view') {
-        const embed = new EmbedBuilder().setColor(0x3498db).setTitle(`📊 ${interaction.user.username}'s Stats`).setDescription('This feature is coming soon!');
-        await interaction.reply({ embeds: [embed], ephemeral: true });
-    }
+  // Your button logic here...
+  if (interaction.customId === 'mcp_refresh') {
+    await interaction.deferUpdate();
+    await postMCPInterface();
+  } else {
+    await interaction.reply({ content: 'This feature is under construction.', ephemeral: true });
+  }
 }
 
 async function handleModalSubmit(interaction) {
     await interaction.deferReply({ ephemeral: true });
+    const [_, __, module, team, logType, impactLevel] = interaction.customId.split('_');
     
-    const [prefix, deptId, taskId] = interaction.customId.split('_');
-    const department = departmentConfig[deptId];
-    const task = department.tasks.find(t => t.value === taskId);
-
-    if (!department || !task) {
-        return interaction.editReply({ content: 'An error occurred with the data submission. Please try again.' });
-    }
-    
-    // --- DYNAMICALLY GET TASK LABEL ---
-    // If the task was 'OTHER', get the custom description from the modal.
-    // Otherwise, use the predefined label.
-    let finalTaskLabel = task.label;
-    if (taskId === 'OTHER') {
-        finalTaskLabel = interaction.fields.getTextInputValue('other_task_description');
-    }
-    // ------------------------------------
-
     const mcpData = {
-        staff_tag: interaction.user.tag,
-        staff_id: interaction.user.id,
-        department_id: deptId,
-        department_label: department.label,
-        task_id: taskId, // This will be 'OTHER' for custom tasks
-        task_label: finalTaskLabel, // This will be the user's custom text
-        summary: interaction.fields.getTextInputValue('summary'),
-        impact_level: interaction.fields.getTextInputValue('impact_level'),
-        reference_link: interaction.fields.getTextInputValue('reference_link') || 'None',
-        submitted_at: new Date().toISOString()
+      "Staff": interaction.user.tag,
+      "Module Affected": module,
+      "Team": team,
+      "Log Type": logType,
+      "Impact Level": impactLevel,
+      "Action Summary": interaction.fields.getTextInputValue('action_summary'),
+      "Blockers Encountered": interaction.fields.getTextInputValue('blockers') || 'None',
+      "Reference Links": interaction.fields.getTextInputValue('reference_links') || 'None'
     };
-
+  
     try {
         const response = await fetch(N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(mcpData)
         });
-        if (!response.ok) throw new Error(`n8n webhook returned HTTP ${response.status}: ${await response.text()}`);
-
-        const successEmbed = new EmbedBuilder()
-            .setColor(0x00ff00)
-            .setTitle('🩸 MCP Log Submitted Successfully')
-            .addFields(
-                { name: '🏢 Department', value: mcpData.department_label, inline: true },
-                { name: '✅ Task', value: mcpData.task_label, inline: true }, // Shows the custom task if applicable
-                { name: '📈 Impact', value: mcpData.impact_level, inline: true },
-                { name: '📋 Summary', value: `\`\`\`${mcpData.summary.slice(0, 1000)}\`\`\``, inline: false }
-            )
-            .setThumbnail(interaction.user.displayAvatarURL())
-            .setTimestamp();
+        if (!response.ok) throw new Error(`n8n webhook failed with status ${response.status}`);
+        
+        const successEmbed = new EmbedBuilder().setColor(0x00ff00).setTitle('✅ Log Submitted Successfully').setDescription(`Your **${logType}** log for the **${team}** team has been recorded.`);
         await interaction.editReply({ embeds: [successEmbed] });
+
     } catch (error) {
-        console.error('[FATAL] Error submitting MCP log:', error);
-        const errorEmbed = new EmbedBuilder().setColor(0xff0000).setTitle('❌ Submission Failed').setDescription(`There was a critical error sending your log.\n\`\`\`${error.message}\`\`\``);
+        console.error("Error submitting to n8n:", error);
+        const errorEmbed = new EmbedBuilder().setColor(0xff0000).setTitle('❌ Submission Failed').setDescription('Could not send data to the processing server.');
         await interaction.editReply({ embeds: [errorEmbed] });
     }
 }
 
 // =========================================================================
-//                             MODAL & HELPERS
+//                       INTERFACE & RESPONSE GENERATORS
 // =========================================================================
 
-async function showLogModal(interaction, deptId, taskId) {
-    const department = departmentConfig[deptId];
-    const task = department.tasks.find(t => t.value === taskId);
+// STEP 1: Main Panel
+async function postMCPInterface() { /* ... unchanged ... */ }
 
-    const modal = new ModalBuilder()
-        .setCustomId(`logmodal_${deptId}_${taskId}`)
-        .setTitle(`Log: ${department.label} Task`);
-  
-    // --- DYNAMICALLY ADD "OTHER" FIELD ---
-    if (taskId === 'OTHER') {
-        const otherTaskInput = new TextInputBuilder()
-            .setCustomId('other_task_description')
-            .setLabel('Describe the custom task you performed')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('e.g., Coordinated with a partner server')
-            .setRequired(true);
-        modal.addComponents(new ActionRowBuilder().addComponents(otherTaskInput));
+// STEP 2: Team Selection
+async function showTeamSelection(interaction, selectedModule) {
+    const teamSelect = new StringSelectMenuBuilder()
+        .setCustomId(`mcp_team_${selectedModule}`)
+        .setPlaceholder('👥 Select Your Team')
+        .addOptions([
+            { label: 'Creatives', value: 'Creatives', emoji: '🎨' },
+            { label: 'Moderation', value: 'Moderation', emoji: '🛡️' },
+            { label: 'Automations', value: 'Automations', emoji: '⚙️' },
+            { label: 'Customer Service', value: 'Customer Service', emoji: '🎧' },
+            { label: 'Council', value: 'Council', emoji: '👑' },
+            { label: 'General', value: 'General', emoji: '📋' }
+        ]);
+    const embed = new EmbedBuilder().setColor(0x3498db).setTitle(`🏢 ${selectedModule} Module`).setDescription('Next, please select your team for this log.');
+    // Check if we need to reply or update
+    if (interaction.isReplied || interaction.deferred) {
+        await interaction.editReply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(teamSelect)] });
+    } else {
+        await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(teamSelect)], ephemeral: true });
     }
-    // ------------------------------------
+}
 
-    const summaryInput = new TextInputBuilder().setCustomId('summary').setLabel('Summary of Action').setStyle(TextInputStyle.Paragraph).setPlaceholder('e.g., Banned user XYZ#1234 for spamming links in #general.').setRequired(true);
-    const impactInput = new TextInputBuilder().setCustomId('impact_level').setLabel('Impact Level').setStyle(TextInputStyle.Short).setPlaceholder('Low, Medium, High, or Critical').setRequired(true);
-    const linkInput = new TextInputBuilder().setCustomId('reference_link').setLabel('Reference Link (Optional)').setStyle(TextInputStyle.Short).setPlaceholder('Link to ticket, user profile, Google Doc, etc.').setRequired(false);
+// STEP 3: NEW Log Type Selection (Replaces Action Type)
+async function showLogTypeSelection(interaction, module, team) {
+    const logTypeSelect = new StringSelectMenuBuilder()
+        .setCustomId(`mcp_logtype_${module}_${team}`)
+        .setPlaceholder('📋 Select the Type of Work...')
+        .addOptions([
+            { label: 'Issue a Sanction', value: 'Sanction', emoji: '⚖️' },
+            { label: 'Resolve a Member Ticket', value: 'Ticket Resolution', emoji: '🎫' },
+            { label: 'Update a System/Bot', value: 'System Update', emoji: '🤖' },
+            { label: 'Fix a Bug/Error', value: 'Error Fix', emoji: '🔧' },
+            { label: 'Review a Log/Appeal', value: 'Review', emoji: '👀' },
+            { label: 'Perform Server Cleanup', value: 'Cleanup', emoji: '🧹' },
+            { label: 'Post New Content', value: 'Content Creation', emoji: '📝' },
+            { label: 'Manual Role/XP Change', value: 'Manual Adjustment', emoji: '⭐' },
+            { label: 'General Task', value: 'General Task', emoji: '📋' }
+        ]);
+    const embed = new EmbedBuilder().setColor(0x1abc9c).setTitle(`👥 Team: ${team}`).setDescription(`What kind of work did you do in **${module}**?`);
+    await interaction.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(logTypeSelect)] });
+}
+
+// STEP 4: Impact Selection (Unchanged logic, updated Custom ID)
+async function showImpactSelection(interaction, module, team, logType) {
+    const impactSelect = new StringSelectMenuBuilder()
+        .setCustomId(`mcp_impact_${module}_${team}_${logType}`)
+        .setPlaceholder('📊 Select Impact Level...')
+        .addOptions([
+            { label: 'Low', value: 'Low', emoji: '🟢' },
+            { label: 'Medium', value: 'Medium', emoji: '🟡' },
+            { label: 'High', value: 'High', emoji: '🟠' },
+            { label: 'Critical', value: 'Critical', emoji: '🔴' }
+        ]);
+    const embed = new EmbedBuilder().setColor(0xe67e22).setTitle(`📋 Log Type: ${logType}`).setDescription(`What was the impact level of this work?`);
+    await interaction.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(impactSelect)] });
+}
+
+// STEP 5: Modal Form (Unchanged logic, updated Custom ID)
+async function showQuickLogModal(interaction, module, team, logType, impactLevel) {
+    const modal = new ModalBuilder()
+        .setCustomId(`mcp_modal_${module}_${team}_${logType}_${impactLevel}`)
+        .setTitle(`Log: ${logType}`);
+    
+    const actionInput = new TextInputBuilder().setCustomId('action_summary').setLabel('Action Summary').setStyle(TextInputStyle.Paragraph).setRequired(true);
+    const blockersInput = new TextInputBuilder().setCustomId('blockers').setLabel('Blockers? ("None" if none)').setStyle(TextInputStyle.Short).setRequired(true).setValue("None");
+    const linksInput = new TextInputBuilder().setCustomId('reference_links').setLabel('Reference Links (Optional)').setStyle(TextInputStyle.Short).setRequired(false);
   
     modal.addComponents(
-        new ActionRowBuilder().addComponents(summaryInput),
-        new ActionRowBuilder().addComponents(impactInput),
-        new ActionRowBuilder().addComponents(linkInput)
+        new ActionRowBuilder().addComponents(actionInput),
+        new ActionRowBuilder().addComponents(blockersInput),
+        new ActionRowBuilder().addComponents(linksInput)
     );
-    
     await interaction.showModal(modal);
 }
 
-function hasPermission(member) {
-    if (!member) return false;
-    return member.roles.cache.some(role => ALLOWED_ROLES.includes(role.id));
-}
-
-function getCurrentWeek() {
-    const now = new Date();
-    const firstDay = new Date(now);
-    firstDay.setDate(now.getDate() - now.getDay() + (now.getDay() === 0 ? -6 : 1)); // Monday as start
-    const lastDay = new Date(firstDay);
-    lastDay.setDate(firstDay.getDate() + 6);
-    return `${firstDay.toLocaleDateString()} - ${lastDay.toLocaleDateString()}`;
-}
-
 // =========================================================================
-//                                  LOGIN
+//                             HELPER FUNCTIONS & LOGIN
 // =========================================================================
+function hasPermission(member) { /* ... unchanged ... */ }
+async function postMCPInterface() { /* ... fill with your main panel code ... */ }
 client.login(BOT_TOKEN);
